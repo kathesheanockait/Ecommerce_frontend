@@ -15,9 +15,8 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import { Link, useNavigate } from "react-router-dom";
-import { signIn } from "../../api/authApi";
-import { useAppDispatch } from "../../redux/hooks";
-import { loginSuccess } from "../../redux/slices/authSlice";
+import { useAppDispatch, useAppSelector } from "../../redux/hooks";
+import { signInUser } from "../../redux/slices/authSlice";
 import { useSnackbar } from "../../commponent/useSnackBar";
 
 export function SignIn() {
@@ -25,40 +24,25 @@ export function SignIn() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { showSnackbar } = useSnackbar();
   const dispatch =useAppDispatch()
-
+  const {loading} = useAppSelector(state=>state.auth)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-     try {
-    const data = await signIn({
-        email,
-        password
-      })
-      
-      dispatch(loginSuccess({
-      role: data.role,
-      token: data.access_token
-    }));
-
-    showSnackbar('Login successfully', "success");
+     
+const resultAction = await dispatch(
+  signInUser({email,password})
+)
+    if (signInUser.fulfilled.match(resultAction)) {
+    showSnackbar("Login successfully", "success");
+    navigate("/dashboard");
     resetForm();
-    navigate('/dashboard')
-     } catch (error:any) {
-      console.log("message:", error.response?.data)  
-    
-    const msg = error.response?.data?.message
-      ?? error.response?.data?.message      
-      ?? "Something went wrong";
-    showSnackbar(msg, "error");
-     }
-     finally{
-       setLoading(false);
-     }
-  };
+  } else {    
+    showSnackbar(resultAction.payload as string, "error");
+  }
+}
+  
 
    const resetForm = () => {
   setEmail(""); setPassword("");

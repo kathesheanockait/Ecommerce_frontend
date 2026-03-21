@@ -17,6 +17,9 @@ import CloudUpload from "@mui/icons-material/CloudUpload";
 import Save from "@mui/icons-material/Save";
 import AccessTime from "@mui/icons-material/AccessTime";
 import ImageNotSupported from "@mui/icons-material/ImageNotSupported";
+import { createProductThunk, fetchProducts, updateProductThunk } from "../../redux/slices/productSlice";
+import { useAppDispatch, useAppSelector } from "../../redux/hooks";
+import { useSnackbar } from "../../commponent/useSnackBar";
 
 export interface Product {
   _id: string;
@@ -30,11 +33,8 @@ export interface Product {
 }
 
 interface ImageEntry {
-  /** object-URL (local file) or remote URL string */
   src: string;
-  /** original file name, present only for local uploads */
   fileName?: string;
-  /** the raw File object – only present for local uploads */
   file?: File;
 }
 
@@ -43,9 +43,6 @@ interface ProductFormProps {
   onClose: () => void;
   mode: "create" | "edit";
   product?: Product | null;
-  onSave: (
-    product: Omit<Product, "_id" | "createdAt" | "updatedAt"> & { _id?: string; files?: File[] }
-  ) => void;
 }
 
 function formatDate(iso?: string) {
@@ -70,8 +67,10 @@ export function ProductForm({ open, onClose, mode, product }: ProductFormProps) 
   const [images, setImages] = useState<ImageEntry[]>([{ src: "" }]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dispatch = useAppDispatch();
+  const {showSnackbar} = useSnackbar();
+  const {success,loading} =useAppSelector(state=>state.product)
 
-  // Cleanup object URLs on unmount / reset
   const revokeObjectURLs = (entries: ImageEntry[]) => {
     entries.forEach((e) => {
       if (e.file && e.src.startsWith("blob:")) URL.revokeObjectURL(e.src);
@@ -131,6 +130,9 @@ export function ProductForm({ open, onClose, mode, product }: ProductFormProps) 
     if (e.dataTransfer.files) addFilesAsImages(e.dataTransfer.files);
   };
 
+  const getFileNameFromUrl = (url: string) => {
+  return url.split("/").pop();
+};
 
   const removeImage = (index: number) => {
     setImages((prev) => {
@@ -141,12 +143,48 @@ export function ProductForm({ open, onClose, mode, product }: ProductFormProps) 
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+const isFormValid =
+  formData.name.trim() !== "" &&
+  formData.price !== "" &&
+  Number(formData.price) > 0 &&
+  formData.stock !== "" &&
+  Number(formData.stock) >= 0 &&
+  images.some((img) => img.src.trim() !== "");
+  
+  const handleSubmit = async(e: React.FormEvent) => {
     e.preventDefault();
+     const formDataToSend = new FormData();
+  formDataToSend.append("name", formData.name);
+  formDataToSend.append("price", formData.price);
+  formDataToSend.append("stock", formData.stock);
+  formDataToSend.append("isAvailable", String(formData.isAvailable));
 
-    
+ images.forEach((img) => {
+    if (img.file) {
+      formDataToSend.append("images", img.file);
+    } else if (img.src) {
+      const fileName = getFileNameFromUrl(img.src);
+      if (fileName) {
+        formDataToSend.append("images", fileName);
+      }
+    }
+  });
+
+    if(mode === "edit" && product){
+      await dispatch(updateProductThunk({  id: product._id, data: formDataToSend, }));
+
+    }else{
+      await dispatch(createProductThunk(formDataToSend));
+    }
+    dispatch(fetchProducts())
   };
 
+  useEffect(() => {
+  if (success) {
+    showSnackbar(success ,"success");
+    onClose();
+  }
+}, [success]);
 
   const textFieldSx = {
     "& .MuiOutlinedInput-root": {
@@ -221,7 +259,6 @@ export function ProductForm({ open, onClose, mode, product }: ProductFormProps) 
 
         <Box
           component="form"
-          onSubmit={handleSubmit}
           sx={{
             flex: 1,
             overflow: "auto",
@@ -508,6 +545,7 @@ export function ProductForm({ open, onClose, mode, product }: ProductFormProps) 
             variant="contained"
             startIcon={<Save />}
             onClick={handleSubmit}
+            disabled={loading || !isFormValid}
             sx={{
               py: 1.5,
               bgcolor: "#00bfa5",
