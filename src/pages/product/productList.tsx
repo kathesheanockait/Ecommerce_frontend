@@ -22,62 +22,121 @@ import Search from "@mui/icons-material/Search";
 import GridView from "@mui/icons-material/GridView";
 import ViewList from "@mui/icons-material/ViewList";
 import Add from "@mui/icons-material/Add";
-import { deleteProductById, getProduct } from "../../api/productApi";
 import { useAppDispatch, useAppSelector } from "../../redux/hooks";
 import { Role } from "../../types/role.type";
 import { ProductCard, type Product } from "./productCard";
 import { ProductForm } from "./productForm";
-import { deleteProduct, setProduct } from "../../redux/slices/productSlice";
+import { deleteProductThunk, fetchProducts, filterProductThunk, } from "../../redux/slices/productSlice";
+
+const FILTER_SESSION_KEY = "productFilters";
+
+interface FilterState {
+  name: string;
+  minStock: number;
+  maxStock: number;
+  sortBy: string;
+  createdAt: string;
+}
+
+const defaultFilters: FilterState = {
+  name: "",
+  minStock: 0,
+  maxStock: 1000,
+  sortBy: "newest",
+  createdAt: "",
+};
+
+function getInitialFilters(): FilterState {
+  if (typeof window === "undefined") return defaultFilters;
+  
+  const savedFilters = sessionStorage.getItem(FILTER_SESSION_KEY);
+  if (savedFilters) {
+    try {
+      return JSON.parse(savedFilters);
+    } catch (error) {
+      console.error("Failed to parse saved filters:", error);
+      return defaultFilters;
+    }
+  }
+  return defaultFilters;
+}
 
 export function ProductList() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState("newest");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [loading, setLoading] = useState(false);
-  const products = useAppSelector((state) => state.product.product);
+  const { product:products,loading} = useAppSelector((state) => state.product);
   const role = useAppSelector((state) => state.auth.role);
   const dispatch =useAppDispatch();
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-
+  const [filters, setFilters] = useState<FilterState>(getInitialFilters);
+  const [isInitialized, setIsInitialized] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchProducts = async () => {
-      setLoading(true);
-      try {
-        const data = await getProduct();
-        dispatch(setProduct(data));
-      } catch (error: any) {
-        console.log("message:", error.response?.data);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProducts();
+    setIsInitialized(true);
   }, []);
 
-  const filteredProducts = products
-    .filter((product) =>
-      product.name.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-    .sort((a, b) => {
-      switch (sortBy) {
-        case "price-asc":
-          return a.price - b.price;
-        case "price-desc":
-          return b.price - a.price;
-        case "stock":
-          return b.stock - a.stock;
-        case "newest":
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        default:
-          return 0;
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    sessionStorage.setItem(FILTER_SESSION_KEY, JSON.stringify(filters));
+
+    const delayDebounce = setTimeout(() => {
+      const queryParams: any = {};
+      
+      if (filters.name.trim()) {
+        queryParams.name = filters.name;
       }
-    });
+      
+      if (filters.minStock !== 0) {
+        queryParams.minStock = filters.minStock;
+      }
+      
+      if (filters.maxStock !== 1000) {
+        queryParams.maxStock = filters.maxStock;
+      }
+      
+      if (filters.createdAt) {
+        queryParams.createdAt = new Date(filters.createdAt);
+      }
+
+      if (Object.keys(queryParams).length === 0) {
+        dispatch(fetchProducts());
+      } else {
+        queryParams.isAvailable = true;
+        dispatch(filterProductThunk(queryParams));
+      }
+    }, 500);
+
+    return () => clearTimeout(delayDebounce);
+  }, [filters, isInitialized, dispatch]);
+
+  const handleSearchChange = (value: string) => {
+    setFilters((prev) => ({ ...prev, name: value }));
+  };
+
+  const handleMinStockChange = (value: number) => {
+    setFilters((prev) => ({ ...prev, minStock: value }));
+  };
+
+  const handleMaxStockChange = (value: number) => {
+    setFilters((prev) => ({ ...prev, maxStock: value }));
+  };
+
+  const handleSortByChange = (value: string) => {
+    setFilters((prev) => ({ ...prev, sortBy: value }));
+  };
+
+  const handleDateChange = (value: string) => {
+    setFilters((prev) => ({ ...prev, createdAt: value }));
+  };
+
+  const handleResetFilters = () => {
+    setFilters(defaultFilters);
+    sessionStorage.removeItem(FILTER_SESSION_KEY);
+  };
 
   const handleAddProduct = () => {
     setFormMode("create");
@@ -100,32 +159,9 @@ export function ProductList() {
     if (productToDelete) {
       console.log(productToDelete);
       
-       deleteProductById(productToDelete)
-        dispatch(deleteProduct(productToDelete))
+        dispatch(deleteProductThunk(productToDelete))
       setDeleteDialogOpen(false);
       setProductToDelete(null);
-    }
-  };
-
-  // Handler for form save
-  const handleSaveProduct = (productData: Omit<Product, "_id" | "createdAt" | "updatedAt"> & { _id?: string }) => {
-    if (formMode === "create") {
-      
-      const newProduct: Product = {
-        ...productData,
-        _id: `temp_${Date.now()}`,
-        createdAt: new Date().toISOString(),
-      };
-      // setProducts((prev) => [newProduct, ...prev]);
-    } else if (formMode === "edit" && productData._id) {
-      
-      // setProducts((prev) =>
-      //   prev.map((p) =>
-      //     p._id === productData._id
-      //       ? { ...p, ...productData, updatedAt: new Date().toISOString() }
-      //       : p
-      //   )
-      // );
     }
   };
 
@@ -175,10 +211,11 @@ export function ProductList() {
             alignItems: "center",
           }}
         >
+          {/* Search Filter - Name Only */}
           <TextField
-            placeholder="Search products..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by name..."
+            value={filters.name}
+            onChange={(e) => handleSearchChange(e.target.value)}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
@@ -200,12 +237,13 @@ export function ProductList() {
             }}
           />
 
-          <FormControl sx={{ minWidth: 160 }}>
-            <InputLabel sx={{ color: "#8b8b9e" }}>Sort By</InputLabel>
+          {/* Stock Range Filter */}
+          <FormControl sx={{ minWidth: 140 }}>
+            <InputLabel sx={{ color: "#8b8b9e" }}>Min Stock</InputLabel>
             <Select
-              value={sortBy}
-              label="Sort By"
-              onChange={(e) => setSortBy(e.target.value)}
+              value={filters.minStock}
+              label="Min Stock"
+              onChange={(e) => handleMinStockChange(Number(e.target.value))}
               sx={{
                 bgcolor: "#12121a",
                 color: "#ffffff",
@@ -215,12 +253,72 @@ export function ProductList() {
                 "& .MuiSvgIcon-root": { color: "#8b8b9e" },
               }}
             >
-              <MenuItem value="newest">Newest</MenuItem>
-              <MenuItem value="price-asc">Price: Low to High</MenuItem>
-              <MenuItem value="price-desc">Price: High to Low</MenuItem>
-              <MenuItem value="stock">Stock</MenuItem>
+              <MenuItem value={0}>0</MenuItem>
+              <MenuItem value={10}>10</MenuItem>
+              <MenuItem value={20}>20</MenuItem>
+              <MenuItem value={50}>50</MenuItem>
+              <MenuItem value={100}>100</MenuItem>
             </Select>
           </FormControl>
+
+          <FormControl sx={{ minWidth: 140 }}>
+            <InputLabel sx={{ color: "#8b8b9e" }}>Max Stock</InputLabel>
+            <Select
+              value={filters.maxStock}
+              label="Max Stock"
+              onChange={(e) => handleMaxStockChange(Number(e.target.value))}
+              sx={{
+                bgcolor: "#12121a",
+                color: "#ffffff",
+                borderRadius: 2,
+                "& .MuiOutlinedInput-notchedOutline": { borderColor: "#2a2a3e" },
+                "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "#00bfa5" },
+                "& .MuiSvgIcon-root": { color: "#8b8b9e" },
+              }}
+            >
+              <MenuItem value={100}>100</MenuItem>
+              <MenuItem value={500}>500</MenuItem>
+              <MenuItem value={1000}>1000</MenuItem>
+              <MenuItem value={5000}>5000</MenuItem>
+              <MenuItem value={10000}>10000</MenuItem>
+            </Select>
+          </FormControl>
+
+          {/* Date Filter */}
+          <TextField
+            type="date"
+            label="Filter by Date"
+            value={filters.createdAt}
+            onChange={(e) => handleDateChange(e.target.value)}
+            InputLabelProps={{ shrink: true, sx: { color: "#8b8b9e" } }}
+            sx={{
+              minWidth: 160,
+              "& .MuiOutlinedInput-root": {
+                bgcolor: "#12121a",
+                color: "#ffffff",
+                borderRadius: 2,
+                "& fieldset": { borderColor: "#2a2a3e" },
+                "&:hover fieldset": { borderColor: "#00bfa5" },
+                "&.Mui-focused fieldset": { borderColor: "#00bfa5" },
+              },
+            }}
+          />
+
+          {/* Reset Filters Button */}
+          <Button
+            onClick={handleResetFilters}
+            sx={{
+              bgcolor: "#1a1a24",
+              color: "#ffffff",
+              textTransform: "none",
+              fontWeight: 600,
+              borderRadius: 2,
+              border: "1px solid #2a2a3e",
+              "&:hover": { bgcolor: "#2a2a3e" },
+            }}
+          >
+            Reset Filters
+          </Button>
 
           <Box sx={{ display: "flex", gap: 0.5 }}>
             <IconButton
@@ -253,7 +351,7 @@ export function ProductList() {
         </Box>
 
         <Typography variant="body2" sx={{ color: "#8b8b9e", mb: 3 }}>
-          Showing {filteredProducts.length} products
+          Showing {products.length} products
         </Typography>
 
         {loading ? (
@@ -267,7 +365,7 @@ export function ProductList() {
           >
             <CircularProgress sx={{ color: "#00bfa5" }} />
           </Box>
-        ) : filteredProducts.length === 0 ? (
+        ) : products.length === 0 ? (
           <Box
             sx={{
               textAlign: "center",
@@ -300,7 +398,7 @@ export function ProductList() {
                   : "1fr",
             }}
           >
-            {filteredProducts.map((product) => (
+            {products.map((product) => (
               <ProductCard
                 key={product._id}
                 product={product}
@@ -320,7 +418,6 @@ export function ProductList() {
         onClose={() => setFormOpen(false)}
         mode={formMode}
         product={selectedProduct}
-        onSave={handleSaveProduct}
       />
 
       {/* Delete Confirmation Dialog */}
